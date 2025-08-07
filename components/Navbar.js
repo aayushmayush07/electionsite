@@ -26,9 +26,8 @@ export default function Navbar() {
 
         {/* Links */}
         <ul
-          className={`${
-            open ? 'block' : 'hidden'
-          } lg:flex gap-6 items-center text-sm`}
+          className={`${open ? 'block' : 'hidden'
+            } lg:flex gap-6 items-center text-sm`}
         >
           <li>
             <Link href="/about">About</Link>
@@ -55,12 +54,12 @@ export default function Navbar() {
               Sign out
             </button>
           ) : (
-            <button
-              onClick={() => signIn('google')}
-              className="px-3 py-1 rounded bg-blue-600 text-white"
-            >
+
+            <Link
+              href="/login"
+              className="px-3 py-1 rounded bg-blue-600 text-white">
               Sign in
-            </button>
+            </Link>
           )}
         </ul>
       </nav>
