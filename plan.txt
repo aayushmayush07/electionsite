@@ -1,0 +1,264 @@
+Below is a **fully-fleshed, “follow-the-clock” blueprint**.  Stick to the checkpoints and you’ll have a deploy-ready site in \~8 hours.
+
+---
+
+## Overview Timeline
+
+| Phase                   | Target Time        | Deliverable Checkpoint                                         |
+| ----------------------- | ------------------ | -------------------------------------------------------------- |
+| 1. Kick-off & Tooling   | **0 h → 1 h**      | Repo bootstrapped, ESLint/Tailwind ready, Mongo connected      |
+| 2. Auth & Global Layout | **1 h → 2 h 30 m** | Google login working, persistent session, nav/footer skeleton  |
+| 3. Data Layer & APIs    | **2 h 30 m → 4 h** | Mongoose models + `/api` handlers, seed script passing         |
+| 4. Pages & Content      | **4 h → 6 h 30 m** | All public pages responsive, ISR/SSG wired, contact form sends |
+| 5. QA & Deploy          | **6 h 30 m → 8 h** | Vercel deployed, Lighthouse ≥ 90 on PWA+Perf, README finished  |
+
+*(\~30 min buffer is baked in).*
+
+---
+
+## Phase 1 — Kick-off & Tooling (0 h → 1 h)
+
+> **Goal:** A clean project scaffold that lints, formats, compiles, connects to Mongo, and boots dev server.
+
+1. **Create repo & scaffold**
+
+   ```bash
+   pnpm create next-app@latest politician-site \
+     --ts --src-dir --app --tailwind --eslint --namedTailwindConfig
+   cd politician-site
+   pnpm add next@15.4.6 react react-dom
+   ```
+
+2. **Dependencies**
+
+   ```bash
+   pnpm add next-auth@^5 mongoose@^8
+   pnpm add -D eslint-config-prettier
+   ```
+
+3. **Tailwind setup**
+
+   * `tailwind.config.ts`:
+
+     ```ts
+     export default {
+       content: ['./src/**/*.{ts,tsx}'],
+       theme: { extend: {} },
+       plugins: [],
+     };
+     ```
+   * In `globals.css` already imported by the template, leave Tailwind directives as-is.
+
+4. **Env vars** (`.env.local`, *git-ignored*)
+
+   ```
+   MONGODB_URI=mongodb+srv://<user>:<pass>@cluster0.mongodb.net/politician
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   NEXTAUTH_SECRET=<openssl rand -base64 32>
+   ```
+
+5. **Mongo helper** `src/lib/mongodb.ts`
+
+   ```ts
+   import mongoose from 'mongoose';
+
+   const URI = process.env.MONGODB_URI!;
+   const opts = {};
+   export async function dbConnect() {
+     if (mongoose.connection.readyState) return;
+     await mongoose.connect(URI, opts);
+   }
+   ```
+
+6. **Absolute imports**
+   In `tsconfig.json` → `"baseUrl": "src"`.
+
+7. **Smoke test**
+
+   ```bash
+   pnpm dev
+   ```
+
+   Load `http://localhost:3000` → No errors? **Commit → “phase-1 ✅”.**
+
+---
+
+## Phase 2 — Auth & Global Layout (1 h → 2 h 30 m)
+
+> **Goal:** Sign-in with Google + universal layout shell.
+
+1. **Auth route & provider**
+
+   * `/src/auth.ts`
+
+     ```ts
+     import Google from 'next-auth/providers/google';
+     import { dbConnect } from './lib/mongodb';
+     export const authOptions = {
+       providers: [Google({ clientId: process.env.GOOGLE_CLIENT_ID!, clientSecret: process.env.GOOGLE_CLIENT_SECRET! })],
+       callbacks: { async session({ session }) { await dbConnect(); return session; }, },
+     };
+     ```
+   * `/src/app/api/auth/[...nextauth]/route.ts`
+
+     ```ts
+     import NextAuth from "next-auth";
+     import { authOptions } from "@/auth";
+     const handler = NextAuth(authOptions);
+     export { handler as GET, handler as POST };
+     ```
+
+2. **`AuthProvider` wrapper**
+
+   ```tsx
+   // src/components/AuthProvider.tsx
+   "use client";
+   import { SessionProvider } from "next-auth/react";
+   export default function AuthProvider({ children }: { children: React.ReactNode }) {
+     return <SessionProvider>{children}</SessionProvider>;
+   }
+   ```
+
+3. **Root Layout**
+
+   ```tsx
+   // src/app/layout.tsx
+   import "./globals.css";
+   import AuthProvider from "@/components/AuthProvider";
+   import Navbar from "@/components/Navbar";
+   import Footer from "@/components/Footer";
+   export default function RootLayout({ children }: { children: React.ReactNode }) {
+     return (
+       <html lang="en">
+         <body className="min-h-screen flex flex-col">
+           <AuthProvider>
+             <Navbar />
+             <main className="flex-grow">{children}</main>
+             <Footer />
+           </AuthProvider>
+         </body>
+       </html>
+     );
+   }
+   ```
+
+4. **Navbar/Footer stubs** (hamburger for mobile, sign-in/out button using `useSession`).
+
+5. **Protect admin route**
+
+   ```tsx
+   // src/app/admin/page.tsx
+   import { getServerSession } from "next-auth";
+   import { authOptions } from "@/auth";
+   export default async function Admin() {
+     const session = await getServerSession(authOptions);
+     if (!session) redirect("/api/auth/signin");
+     return <div>Admin dashboard 🚧</div>;
+   }
+   ```
+
+6. **Checkpoint:** Google auth round-trips, `/admin` blocked for guests, layout visible. **Commit.**
+
+---
+
+## Phase 3 — Data Layer & APIs (2 h 30 m → 4 h)
+
+> **Goal:** DB schema + CRUD endpoints.
+
+1. **Mongoose models** (`src/models`)
+
+   * `news.ts`
+
+     ```ts
+     import mongoose from "mongoose";
+     const NewsSchema = new mongoose.Schema(
+       { title: String, slug: String, body: String, cover: String, publishedAt: Date },
+       { timestamps: true }
+     );
+     export default mongoose.models.News || mongoose.model("News", NewsSchema);
+     ```
+   * `image.ts` (gallery)
+   * `message.ts` (contact form)
+
+2. **Route Handlers (app router)**
+
+   * `/src/app/api/news/[slug]/route.ts` → GET single.
+   * `/src/app/api/news/route.ts` → GET list, POST create (admin only).
+   * Similar for `/api/gallery` and `/api/contact` (POST).
+
+3. **Session guard helper** (`src/lib/auth.ts`) to check admin email.
+
+4. **Seed script** (`scripts/seed.ts`) – run with `tsx` to push 2-3 sample docs; verify in Atlas.
+
+5. **Checkpoint:** `GET /api/news` returns seeded JSON. **Commit.**
+
+---
+
+## Phase 4 — Pages & Content (4 h → 6 h 30 m)
+
+> **Goal:** User-facing pages feature-complete, responsive, ISR/SSG where useful.
+
+| Page                   | Implementation Notes                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Home** (`/page.tsx`) | Hero with name, photo, slogan; highlights latest 3 news via `fetch("/api/news",{ next:{ revalidate:60 }})`                  |
+| **About**              | Static markdown or rich JSX; load at build (`export const revalidate = false`).                                             |
+| **Vision & Mission**   | Similar static; maybe timeline cards.                                                                                       |
+| **Gallery**            | Fetch list; Masonry grid with `next/image`; click = modal.                                                                  |
+| **News**               | List route `/news` (pagination); dynamic route `/news/[slug]/page.tsx` uses `generateStaticParams` + ISR *(revalidate:60)*. |
+| **Contact**            | Client component with form validation → POST `/api/contact`; toast on success.                                              |
+| **Social Links**       | Small icon row (Font Awesome or Lucide) in Footer & Hero.                                                                   |
+
+**Styling Hints**
+
+* Tailwind breakpoints (`sm md lg xl`) for grid.
+* Use `prose` class from @tailwindcss/typography for article body.
+
+**Checkpoint:** Manual QA on Chrome dev tools: ≤ 640 px, 768 px, ≥ 1024 px look good. **Commit.**
+
+---
+
+## Phase 5 — QA & Deploy (6 h 30 m → 8 h)
+
+1. **Performance & SEO**
+
+   ```bash
+   pnpm dlx @next/lighthouse
+   ```
+
+   Aim ≥ 90 on Performance + PWA; lazy-load gallery, compress images.
+
+2. **Accessibility sweep** with Storybook a11y or Lighthouse.
+
+3. **Meta tags & OG** in `/src/app/head.tsx`.
+
+4. **Error monitoring** (optional): `pnpm add @vercel/analytics`.
+
+5. **Deploy to Vercel**
+
+   * Import GitHub repo.
+   * Add env vars in Vercel dashboard.
+   * Build & verify preview.
+   * Promote to Production.
+
+6. **README.md**
+
+   * Project description, tech stack, local dev steps, env var names, deployment link.
+
+7. **Buffer tasks** (use leftover time):
+
+   * Add admin CRUD UI in `/admin`.
+   * Unit tests for API routes with Vitest.
+
+8. **Final Commit & Tag**
+
+   ```bash
+   git tag v1.0.0 -m "MVP complete"
+   git push --tags
+   ```
+
+---
+
+### You’re set!
+
+Start a Pomodoro timer, knock out Phase 1, and ping me **“Phase 2 ready”** (or any blocker) — I’ll drop the exact code for the next milestone.
